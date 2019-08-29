@@ -1,10 +1,13 @@
 const BLOCK_SIZE: usize = 16;
 pub type Alphabet = u8;
+
 pub const Blank: Alphabet = 255;
 
+pub const ACCEPT_STATE: usize = 0;
+pub const REJECT_STATE: usize = 1;
 
 mod internal {
-	use super::{Alphabet, HeadAction, BLOCK_SIZE, Blank};
+	use super::{Alphabet, HeadAction, BLOCK_SIZE, Blank, ACCEPT_STATE, REJECT_STATE};
 
 	#[derive(Debug)]
 	pub struct Transition {
@@ -17,6 +20,14 @@ mod internal {
 	#[derive(Debug)]
 	pub struct State {
 		pub transitions: Vec<Transition>,
+	}
+
+	impl State {
+		pub fn empty() -> Self {
+			State {
+				transitions: Vec::new(),
+			}
+		}
 	}
 
 	#[derive(Debug)]
@@ -32,24 +43,36 @@ mod internal {
 	}
 
 	impl Program {
-		pub fn with_states(states: Vec<State>) -> Self {
+		pub fn with_states(mut states: Vec<State>) -> Self {
+			// marker states
+			let mut marker_states = vec![State::empty(), State::empty()];
+			marker_states.append(&mut states);
+
 			Program {
-				states,
+				states: marker_states,
 				current_state: 2,
 			}
+		}
+
+		pub fn current_state(&self) -> &State {
+			&self.states[self.current_state]
+		}
+
+		pub fn reject(&mut self) {
+			self.current_state = 1;
 		}
 	}
 #[derive(Debug)]
 	pub struct Tape {
 		head: usize,
-		cells: Vec<Block>,
+		blocks: Vec<Block>,
 	}
 
 	impl Tape {
 		pub fn from_input(input: Vec<Alphabet>) -> Self {
 			Tape {
-				head: 0,
-				cells: input.windows(BLOCK_SIZE).map(|cells| {
+				head: BLOCK_SIZE,
+				blocks: vec![Block {cells: [Blank; BLOCK_SIZE]}].into_iter().chain(input.chunks(BLOCK_SIZE).map(|cells| {
 					let mut block = Block { cells: [Blank; BLOCK_SIZE] };
 
 					for (i, e) in cells.iter().enumerate() {
@@ -57,15 +80,27 @@ mod internal {
 					}
 
 					block
-				}).collect()
+				})).collect()
 			}
+		}
+
+		pub fn current_cell(&mut self) -> &mut Alphabet {
+			&mut self.blocks[self.head / BLOCK_SIZE].cells[self.head % BLOCK_SIZE]
+		}
+
+		pub fn move_left(&mut self) {
+			self.head = if self.head == 0 { 0 } else { self.head - 1 };
+		}
+		
+		pub fn move_right(&mut self) {
+			self.head = self.head + 1;
 		}
 	}
 
 	#[derive(Debug)]
 	pub struct Machine {
-		program: Program,
-		tape: Tape,
+		pub program: Program,
+		pub tape: Tape,
 	}
 
 	impl Machine {
@@ -74,6 +109,42 @@ mod internal {
 				program,
 				tape: Tape::from_input(input),
 			}
+		}
+
+		pub fn run_to_end(&mut self) -> bool {
+			loop {
+				self.step();
+
+				match self.program.current_state {
+					s if s == ACCEPT_STATE => return true,
+					s if s == REJECT_STATE => return false,
+					_ => ()
+				}
+			}
+		}
+
+		pub fn step(&mut self) {
+			let state = self.program.current_state();
+			let cell = self.tape.current_cell();
+
+			dbg!(self.program.current_state);
+			dbg!(*cell);
+
+			for t in state.transitions.iter() {
+				if t.cond == *cell {
+					*cell = t.write;
+					match t.head {
+						HeadAction::Stay => (),
+						HeadAction::Left => self.tape.move_left(),
+						HeadAction::Right => self.tape.move_right(),
+					}
+
+					self.program.current_state = t.next;
+					return;
+				}
+			}
+
+			self.program.reject();
 		}
 	}
 }
@@ -126,7 +197,7 @@ impl ProgramBuilder {
 							"Accept" => 0,
 							"Reject" => 1,
 							name => {
-								self.states.iter().position(|s| s.name == name).expect("failed to find state")
+								2 + self.states.iter().position(|s| s.name == name).expect("failed to find state")
 							}
 						}
 					}
